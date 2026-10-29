@@ -15,7 +15,13 @@ public struct DeviceProfile: Equatable, Sendable, Identifiable {
     /// "Live 770NC" shares a model number with "Tune 770NC" but speaks a different protocol.
     public let bluetoothNames: [String]
     public let settableModes: [NoiseMode]
+    /// Everything beyond noise control, each confirmed on this model.
+    public let features: Set<Feature>
     public let evidence: Evidence
+
+    public enum Feature: CaseIterable, Sendable {
+        case battery, spatialSound, voiceAware, smartTalk, autoPlayPause, autoAnswer, voicePrompts
+    }
 
     public func matches(deviceName: String) -> Bool {
         let name = deviceName.lowercased()
@@ -25,13 +31,13 @@ public struct DeviceProfile: Equatable, Sendable, Identifiable {
     public static let all: [DeviceProfile] = [
         DeviceProfile(id: "jbl-tour-pro-3", displayName: "JBL Tour Pro 3",
                       bluetoothNames: ["Tour Pro 3"], settableModes: NoiseMode.settable,
-                      evidence: .testedHere),
+                      features: Set(Feature.allCases), evidence: .testedHere),
         DeviceProfile(id: "jbl-tune-770nc", displayName: "JBL Tune 770NC",
                       bluetoothNames: ["Tune 770NC"], settableModes: NoiseMode.settable,
-                      evidence: .reportedBy("https://github.com/davedumto/Hush")),
+                      features: [], evidence: .reportedBy("https://github.com/davedumto/Hush")),
         DeviceProfile(id: "jbl-tune-670nc", displayName: "JBL Tune 670NC",
                       bluetoothNames: ["Tune 670NC"], settableModes: NoiseMode.settable,
-                      evidence: .reportedBy("https://github.com/davedumto/Hush")),
+                      features: [], evidence: .reportedBy("https://github.com/davedumto/Hush")),
     ]
 
     public static func profile(forDeviceName name: String) -> DeviceProfile? {

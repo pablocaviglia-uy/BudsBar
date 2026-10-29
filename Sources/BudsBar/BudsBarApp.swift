@@ -23,6 +23,9 @@ private struct MenuContent: View {
 
     var body: some View {
         Text(buds.statusLine)
+        if let battery = buds.batteryLine {
+            Text(battery)
+        }
         if let notice = buds.notice {
             Text(notice)
         }
@@ -35,6 +38,7 @@ private struct MenuContent: View {
                 ))
             }
             Text("To turn noise control off, use the case or the earbuds")
+            SettingsSection(buds: buds)
         }
         Divider()
         Button("Refresh") { buds.refresh() }
@@ -51,6 +55,94 @@ private struct MenuContent: View {
         }
         Button("Quit BudsBar") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+/// Settings beyond noise control, shown only for models whose profile lists them.
+private struct SettingsSection: View {
+    @ObservedObject var buds: BudsController
+
+    var body: some View {
+        let state = buds.state
+        if DeviceProfile.Feature.allCases.contains(where: { $0 != .battery && buds.supports($0) }) {
+            Divider()
+        }
+        if buds.supports(.spatialSound) {
+            Menu("Spatial Sound: \(state.spatialSound?.displayName ?? "…")") {
+                ForEach(SpatialSound.allCases, id: \.self) { mode in
+                    Toggle(mode.displayName, isOn: Binding(
+                        get: { state.spatialSound == mode },
+                        set: { _ in buds.setSpatialSound(mode) }
+                    ))
+                }
+            }
+        }
+        if buds.supports(.voiceAware) {
+            Menu("VoiceAware: \(voiceAwareSummary(state))") {
+                Toggle("On", isOn: Binding(
+                    get: { state.voiceAware == true },
+                    set: { buds.setVoiceAware($0) }
+                ))
+                Divider()
+                ForEach(ConfigValue.voiceAwareLevels, id: \.self) { level in
+                    Toggle(Self.levelName(level), isOn: Binding(
+                        get: { state.voiceAwareLevel == level },
+                        set: { _ in buds.setVoiceAwareLevel(level) }
+                    ))
+                }
+            }
+        }
+        if buds.supports(.smartTalk) {
+            Menu("Smart Talk: \(smartTalkSummary(state))") {
+                Toggle("Off", isOn: Binding(
+                    get: { state.smartTalk?.isEnabled == false },
+                    set: { _ in buds.setSmartTalk(enabled: false) }
+                ))
+                ForEach(SmartTalk.allowedSeconds, id: \.self) { seconds in
+                    Toggle("\(seconds) seconds", isOn: Binding(
+                        get: { state.smartTalk?.isEnabled == true && state.smartTalk?.seconds == seconds },
+                        set: { _ in buds.setSmartTalk(enabled: true, seconds: seconds) }
+                    ))
+                }
+            }
+        }
+        if buds.supports(.autoPlayPause) {
+            Toggle("Auto Play & Pause", isOn: Binding(
+                get: { state.autoPlayPause == true },
+                set: { buds.setAutoPlayPause($0) }
+            ))
+        }
+        if buds.supports(.autoAnswer) {
+            Toggle("Answer Calls Automatically", isOn: Binding(
+                get: { state.autoAnswer == true },
+                set: { buds.setAutoAnswer($0) }
+            ))
+        }
+        if buds.supports(.voicePrompts) {
+            Toggle("Voice Prompts", isOn: Binding(
+                get: { state.voicePrompts == true },
+                set: { buds.setVoicePrompts($0) }
+            ))
+        }
+    }
+
+    static func levelName(_ level: Int) -> String {
+        switch level {
+        case 1: return "Low"
+        case 2: return "Medium"
+        default: return "High"
+        }
+    }
+
+    private func voiceAwareSummary(_ state: DeviceState) -> String {
+        guard let on = state.voiceAware else { return "…" }
+        guard on else { return "Off" }
+        return state.voiceAwareLevel.map(Self.levelName) ?? "On"
+    }
+
+    private func smartTalkSummary(_ state: DeviceState) -> String {
+        guard let smartTalk = state.smartTalk else { return "…" }
+        return smartTalk.isEnabled ? "\(smartTalk.seconds) s" : "Off"
     }
 }
 
@@ -75,6 +167,16 @@ extension NoiseMode {
     }
 }
 
+extension SpatialSound {
+    var displayName: String {
+        switch self {
+        case .off: return "Off"
+        case .fixed: return "Fixed"
+        case .headTracking: return "Head Tracking"
+        }
+    }
+}
+
 extension BudsController {
     var menuBarImage: NSImage {
         let shownMode = isConnected ? (pendingMode ?? mode) : nil
@@ -82,6 +184,13 @@ extension BudsController {
                                  dimmed: !isConnected,
                                  modePending: pendingMode != nil,
                                  accessibilityLabel: "BudsBar — \(statusLine)")
+    }
+
+    var batteryLine: String? {
+        guard isConnected, !state.battery.isEmpty else { return nil }
+        let parts: [(EarbudSide, String)] = [(.left, "L"), (.right, "R"), (.chargingCase, "Case")]
+        let text = parts.compactMap { side, label in state.battery[side].map { "\(label) \($0)%" } }
+        return "Battery: " + text.joined(separator: " · ")
     }
 
     var statusLine: String {
@@ -99,7 +208,7 @@ extension BudsController {
         case .connected(let name):
             if let pendingMode { return "\(name): switching to \(pendingMode.displayName)…" }
             if let mode { return "\(name): \(mode.displayName)" }
-            if let rawMode { return "\(name): unknown mode 0x\(String(rawMode, radix: 16))" }
+            if let raw = state.rawNoiseMode { return "\(name): unknown mode 0x\(String(raw, radix: 16))" }
             return "\(name): reading mode…"
         case .failed(let reason):
             return "Error: \(reason)"

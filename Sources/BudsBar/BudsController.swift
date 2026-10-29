@@ -9,7 +9,7 @@ private func log(_ message: String) {
     logger.notice("\(message, privacy: .public)")
 }
 
-/// Owns the RACE channel to the paired earbuds and publishes their noise-control state.
+/// Owns the RACE channel to the paired earbuds and publishes their state.
 ///
 /// IOBluetooth delivers every callback on the run loop that created the objects, which here is
 /// the main one, so all state is touched on the main thread only.
@@ -26,8 +26,7 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     }
 
     @Published private(set) var status: Status = .searching
-    @Published private(set) var mode: NoiseMode?
-    @Published private(set) var rawMode: UInt8?
+    @Published private(set) var state = DeviceState()
     @Published private(set) var pendingMode: NoiseMode?
     @Published private(set) var notice: String?
     @Published private(set) var profile: DeviceProfile?
@@ -45,10 +44,18 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     private var disconnectNotification: IOBluetoothUserNotification?
     private var retries = 0
     private var pendingTimeout: DispatchWorkItem?
+    /// Read sent after a setting write is accepted, so the menu shows what the earbuds stored.
+    private var pendingReadBack: RaceCommand?
 
     var isConnected: Bool {
         if case .connected = status { return true }
         return false
+    }
+
+    var mode: NoiseMode? { state.noiseMode }
+
+    func supports(_ feature: DeviceProfile.Feature) -> Bool {
+        isConnected && profile?.features.contains(feature) == true
     }
 
     override init() {
@@ -65,7 +72,7 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
             retries = 0
             start()
         } else {
-            send(.readNoiseMode)
+            readAll()
         }
     }
 
@@ -83,6 +90,42 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
         }
         pendingTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: timeout)
+    }
+
+    func setSpatialSound(_ mode: SpatialSound) { change(.setSpatialSound(mode), readBack: .readSpatialSound) }
+    func setVoiceAware(_ on: Bool) { change(.writeConfig(.voiceAware(on)), readBack: .readConfig(.voiceAware)) }
+    func setVoiceAwareLevel(_ level: Int) { change(.writeConfig(.voiceAwareLevel(level)), readBack: .readConfig(.voiceAwareLevel)) }
+    func setAutoPlayPause(_ on: Bool) { change(.writeConfig(.autoPlayPause(on)), readBack: .readConfig(.autoPlayPause)) }
+    func setVoicePrompts(_ on: Bool) { change(.writeConfig(.voicePrompts(on)), readBack: .readConfig(.voicePrompts)) }
+    func setAutoAnswer(_ on: Bool) { change(.setAutoAnswer(on), readBack: .readAutoAnswer) }
+
+    /// Off keeps the last duration, as the official app does.
+    func setSmartTalk(enabled: Bool, seconds: UInt8? = nil) {
+        let current = state.smartTalk?.seconds ?? 0
+        let duration = seconds ?? (SmartTalk.allowedSeconds.contains(current) ? current : SmartTalk.allowedSeconds[0])
+        change(.setSmartTalk(SmartTalk(isEnabled: enabled, seconds: duration)), readBack: .readSmartTalk)
+    }
+
+    private func change(_ command: RaceCommand, readBack: RaceCommand) {
+        guard isConnected, let frame = command.encoded else { return }
+        notice = nil
+        pendingReadBack = readBack
+        write(frame)
+    }
+
+    private func readAll() {
+        send(.readNoiseMode)
+        guard let features = profile?.features else { return }
+        if features.contains(.spatialSound) { send(.readSpatialSound) }
+        if features.contains(.voiceAware) {
+            send(.readConfig(.voiceAware))
+            send(.readConfig(.voiceAwareLevel))
+        }
+        if features.contains(.smartTalk) { send(.readSmartTalk) }
+        if features.contains(.autoPlayPause) { send(.readConfig(.autoPlayPause)) }
+        if features.contains(.autoAnswer) { send(.readAutoAnswer) }
+        if features.contains(.voicePrompts) { send(.readConfig(.voicePrompts)) }
+        // Battery needs no read: the earbuds push it as soon as the channel opens.
     }
 
     // MARK: Device discovery
@@ -152,10 +195,14 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     @objc private func deviceDisconnected(_ note: IOBluetoothUserNotification, device disconnected: IOBluetoothDevice) {
         log("disconnected: \(disconnected.name ?? "?")")
         channel = nil
-        mode = nil
-        rawMode = nil
-        clearPending()
+        resetState()
         status = .disconnected(name: disconnected.name ?? "?")
+    }
+
+    private func resetState() {
+        state = DeviceState()
+        pendingReadBack = nil
+        clearPending()
     }
 
     // MARK: Channel
@@ -202,14 +249,12 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
         retries = 0
         status = .connected(name: device?.name ?? "?")
         log("RACE channel open")
-        send(.readNoiseMode)
+        readAll()
     }
 
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
         guard rfcommChannel === channel else { return }
-        mode = nil
-        rawMode = nil
-        clearPending()
+        resetState()
         scheduleRetry("RACE channel closed")
     }
 
@@ -219,20 +264,27 @@ final class BudsController: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     }
 
     private func handle(_ frame: RaceFrame) {
+        state.apply(frame)
         switch frame.event {
         case .noiseMode(let reported, let raw):
-            mode = reported
-            rawMode = raw
             log("noise mode 0x\(String(raw, radix: 16))")
             if let pendingMode, pendingMode == reported { clearPending() }
         case .setNoiseModeResult(let accepted, let statusByte):
-            log("set result 0x\(String(statusByte, radix: 16))")
+            log("noise mode set result 0x\(String(statusByte, radix: 16))")
             if accepted {
                 // The buds also send an indication; reading back covers the case where it is missed.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.send(.readNoiseMode) }
             } else {
                 clearPending()
                 notice = "Rejected — are the earbuds in your ears?"
+            }
+        case .settingWriteResult(let accepted, let statusByte):
+            log("setting write result 0x\(String(statusByte, radix: 16))")
+            let readBack = pendingReadBack
+            pendingReadBack = nil
+            if !accepted { notice = "The earbuds rejected that change" }
+            if let readBack {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.send(readBack) }
             }
         case .other:
             break
