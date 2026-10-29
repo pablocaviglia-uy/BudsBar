@@ -1,3 +1,5 @@
+<img src="Resources/AppIcon.png" width="128" alt="BudsBar icon">
+
 # BudsBar
 
 A small macOS menu bar app that reads and switches the noise-control mode of earbuds built on
@@ -42,6 +44,7 @@ firmware's behaviour, not something BudsBar can trigger.
 ./scripts/build-app.sh            # builds build/BudsBar.app
 ./scripts/build-app.sh --install  # also copies it to ~/Applications
 swift test                        # protocol tests
+./scripts/make-icon.sh            # regenerates Resources/AppIcon.icns
 ```
 
 The app is ad-hoc signed, not notarized. On first launch macOS may refuse to open it: right-click
