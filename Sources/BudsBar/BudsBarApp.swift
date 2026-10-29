@@ -5,16 +5,13 @@ import SwiftUI
 @main
 struct BudsBarApp: App {
     @StateObject private var buds = BudsController()
+    @StateObject private var loginItem = LoginItem()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(buds: buds)
+            MenuContent(buds: buds, loginItem: loginItem)
         } label: {
-            if let short = buds.menuBarTitle {
-                Text("\(Image(systemName: "earbuds")) \(short)")
-            } else {
-                Image(systemName: "earbuds")
-            }
+            Image(nsImage: buds.menuBarImage)
         }
         .menuBarExtraStyle(.menu)
     }
@@ -22,6 +19,7 @@ struct BudsBarApp: App {
 
 private struct MenuContent: View {
     @ObservedObject var buds: BudsController
+    @ObservedObject var loginItem: LoginItem
 
     var body: some View {
         Text(buds.statusLine)
@@ -41,6 +39,16 @@ private struct MenuContent: View {
         Divider()
         Button("Refresh") { buds.refresh() }
             .keyboardShortcut("r")
+        Toggle("Open at Login", isOn: Binding(
+            get: { loginItem.isEnabled },
+            set: { loginItem.set($0) }
+        ))
+        if loginItem.needsApproval {
+            Button("Allow BudsBar in Login Items…") { loginItem.openSystemSettings() }
+        }
+        if let error = loginItem.error {
+            Text("Login item: \(error)")
+        }
         Button("Quit BudsBar") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
@@ -56,21 +64,24 @@ extension NoiseMode {
         }
     }
 
-    var shortName: String {
+    /// Glyph shown next to the earbuds in the menu bar; off shows the earbuds alone.
+    var symbolName: String? {
         switch self {
-        case .off: return "Off"
-        case .anc: return "ANC"
-        case .ambientAware: return "Amb"
-        case .talkThru: return "Talk"
+        case .off: return nil
+        case .anc: return "waveform.slash"
+        case .ambientAware: return "ear"
+        case .talkThru: return "person.wave.2"
         }
     }
 }
 
 extension BudsController {
-    var menuBarTitle: String? {
-        guard isConnected else { return nil }
-        if let pendingMode { return pendingMode.shortName + "…" }
-        return mode?.shortName
+    var menuBarImage: NSImage {
+        let shownMode = isConnected ? (pendingMode ?? mode) : nil
+        return MenuBarIcon.image(modeSymbol: shownMode?.symbolName,
+                                 dimmed: !isConnected,
+                                 modePending: pendingMode != nil,
+                                 accessibilityLabel: "BudsBar — \(statusLine)")
     }
 
     var statusLine: String {

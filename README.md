@@ -4,6 +4,10 @@ A small macOS menu bar app that reads and switches the noise-control mode of ear
 Airoha Bluetooth chips — Noise Cancelling, Ambient Aware and TalkThru — the way the vendor's
 phone app does, without a phone.
 
+The menu bar icon shows the earbuds plus the active mode (a crossed waveform for Noise
+Cancelling, an ear for Ambient Aware, a speaking person for TalkThru), and the menu has an
+**Open at Login** switch.
+
 Not affiliated with, endorsed by or sponsored by JBL, Harman or Airoha. Product names are
 trademarks of their owners and are used here only to say which devices work.
 
@@ -27,6 +31,10 @@ that expose the protocol but have no profile are shown as "not supported yet" an
   reach them.
 - The earbuds **in your ears**: they reject mode changes while they are not worn, and the menu
   says so.
+
+On the Tour Pro 3, the case screen only reads the mode when its page is opened: after a change from
+BudsBar, or from JBL's own phone app, leave the page and come back to see it. That is the case
+firmware's behaviour, not something BudsBar can trigger.
 
 ## Build and run
 
